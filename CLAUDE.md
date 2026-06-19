@@ -67,6 +67,8 @@ Before dispatching a new image to the clipboard, `ImageHandler` calls `wait_for_
 
 The second argument (`$true`) is the `copy` flag that tells Windows to keep the clipboard data alive after the PowerShell process exits. Without it (`$false` or omitted), the image is placed on the clipboard but vanishes as soon as the PowerShell process terminates — leaving the clipboard empty by the time you try to paste.
 
+Both PowerShell call sites (clipboard and toast) run with the environment from `_powershell_env()`. WSL interop sockets (`/run/WSL/<pid>_interop`) are session-scoped, so the value a long-lived systemd `--user` service inherits goes stale after a WSL restart and `powershell.exe` then refuses to launch. When the inherited `WSL_INTEROP` is missing or its socket no longer exists, `_scan_proc_for_interop()` walks `/proc/<pid>/environ` for a live process's still-valid socket and uses that — so Windows-side calls survive reboots and session churn with no manual re-arming.
+
 ### Linux/WSLg clipboard
 
 `LinuxBackend.copy` prefers `wl-copy` (Wayland, used by WSLg) and falls back to `xclip` (X11). It passes the image bytes via stdin with the correct MIME type. If neither tool is found, a `RuntimeError` is raised (caught by the per-backend isolation above).

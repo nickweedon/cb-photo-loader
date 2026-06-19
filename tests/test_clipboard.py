@@ -160,6 +160,31 @@ def test_windows_backend_escapes_single_quotes(monkeypatch):
     assert "Hannah's photo.png" not in joined.replace("Hannah''s photo.png", "")
 
 
+def test_powershell_env_keeps_valid_current_interop(monkeypatch):
+    monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/123_interop"})
+    monkeypatch.setattr(clip.os.path, "exists", lambda p: True)
+    # _scan must not be consulted when the inherited socket still exists.
+    monkeypatch.setattr(clip, "_scan_proc_for_interop", lambda: "/run/WSL/should_not_use")
+    env = clip._powershell_env()
+    assert env["WSL_INTEROP"] == "/run/WSL/123_interop"
+
+
+def test_powershell_env_resolves_live_interop_when_stale(monkeypatch):
+    monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/dead_interop"})
+    monkeypatch.setattr(clip.os.path, "exists", lambda p: False)  # inherited socket gone
+    monkeypatch.setattr(clip, "_scan_proc_for_interop", lambda: "/run/WSL/live_interop")
+    env = clip._powershell_env()
+    assert env["WSL_INTEROP"] == "/run/WSL/live_interop"
+
+
+def test_powershell_env_merges_extra(monkeypatch):
+    monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/123_interop"})
+    monkeypatch.setattr(clip.os.path, "exists", lambda p: True)
+    env = clip._powershell_env({"CBPL_BODY": "x.png"})
+    assert env["CBPL_BODY"] == "x.png"
+    assert env["WSL_INTEROP"] == "/run/WSL/123_interop"
+
+
 def test_dispatcher_skips_notify_when_all_fail(tmp_path):
     img = tmp_path / "a.png"
     img.write_bytes(b"X")

@@ -10,6 +10,49 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+
+def _scan_proc_for_interop() -> str | None:
+    """Find a WSL_INTEROP socket belonging to a live process.
+
+    A process that has ``WSL_INTEROP`` in its environment is, by definition,
+    alive (it has a ``/proc`` entry) and its value points at its own session's
+    interop socket. Returns the first such value whose socket file still
+    exists, or ``None``.
+    """
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            data = (Path("/proc") / pid / "environ").read_bytes()
+        except OSError:
+            continue  # process gone or not readable by us
+        for chunk in data.split(b"\x00"):
+            if chunk.startswith(b"WSL_INTEROP="):
+                val = chunk[len(b"WSL_INTEROP="):].decode("utf-8", "replace")
+                if val and os.path.exists(val):
+                    return val
+    return None
+
+
+def _powershell_env(extra: dict | None = None) -> dict:
+    """Build the environment for a ``powershell.exe`` subprocess.
+
+    WSL interop sockets are session-scoped, so the value inherited by a
+    long-lived systemd ``--user`` service goes stale after a WSL restart and
+    ``powershell.exe`` then fails to launch. Re-resolve a live ``WSL_INTEROP``
+    whenever the inherited one is missing or its socket no longer exists.
+    """
+    env = dict(os.environ)
+    current = env.get("WSL_INTEROP")
+    if not current or not os.path.exists(current):
+        live = _scan_proc_for_interop()
+        if live:
+            env["WSL_INTEROP"] = live
+    if extra:
+        env.update(extra)
+    return env
+
+
 # PowerShell that raises a Windows toast via the WinRT notification API. The
 # image path, title, and body are passed in through environment variables
 # (never interpolated into the script text) and XML-escaped inside PowerShell,
@@ -68,6 +111,7 @@ class WindowsBackend:
             ["powershell.exe", "-NoProfile", "-Command", script],
             check=True,
             capture_output=True,
+            env=_powershell_env(),
         )
 
 
@@ -103,12 +147,13 @@ class Notifier:
             capture_output=True,
             text=True,
         ).stdout.strip()
-        env = {
-            **os.environ,
-            "CBPL_IMG": win_path,
-            "CBPL_TITLE": "Image copied",
-            "CBPL_BODY": image_path.name,
-        }
+        env = _powershell_env(
+            {
+                "CBPL_IMG": win_path,
+                "CBPL_TITLE": "Image copied",
+                "CBPL_BODY": image_path.name,
+            }
+        )
         subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", _TOAST_SCRIPT],
             check=True,
