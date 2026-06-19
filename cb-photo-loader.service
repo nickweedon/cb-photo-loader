@@ -1,0 +1,11 @@
+[Unit]
+Description=Clipboard photo loader — watch a directory and copy new images to the clipboard
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/bin/cb-photo-loader
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

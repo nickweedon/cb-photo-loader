@@ -1,0 +1,5 @@
+# Copy to ~/.config/cb-photo-loader/config.toml and edit.
+watch_dir = "/mnt/temp/phone-downloads"
+extensions = ["png", "jpg", "jpeg", "gif", "bmp", "webp"]
+stability_ms = 750
+notifications = true
