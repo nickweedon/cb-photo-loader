@@ -95,11 +95,31 @@ systemctl --user daemon-reload
 systemctl --user enable --now cb-photo-loader
 ```
 
+If you installed into a virtualenv rather than with pipx, edit the `ExecStart`
+line in the copied unit to point at your venv binary (e.g.
+`/path/to/cb-photo-loader/.venv/bin/cb-photo-loader`) before `daemon-reload`.
+
 Follow the logs:
 
 ```bash
 journalctl --user -u cb-photo-loader -f
 ```
+
+### Why the unit sets extra environment (WSL)
+
+A systemd `--user` service does **not** inherit your interactive shell's
+environment, and the defaults break both backends under WSL. The shipped unit
+therefore sets:
+
+- **`PATH`** including the Windows directories, so `powershell.exe` resolves —
+  it drives both the Windows clipboard and the toast notifications.
+- **`WAYLAND_DISPLAY` / `DISPLAY`**, needed by the Linux/WSLg clipboard.
+
+`WSL_INTEROP` is **not** pinned in the unit: it is tied to a WSL session and
+goes stale when WSL restarts, so the app re-resolves a live one at runtime (by
+scanning `/proc`) before each PowerShell call. This means the service keeps
+working across `wsl --shutdown` / reboots with no manual steps. The service
+starts when you open WSL (no `loginctl enable-linger` required).
 
 ## Running without systemd
 
@@ -113,3 +133,4 @@ nohup ~/.local/bin/cb-photo-loader &
 
 1. Rapid successive downloads are processed serially because the stability wait runs on the watcher's dispatch thread. Under a burst of incoming files the clipboard ends up holding whichever file finishes its stability check last, not strictly the newest one.
 2. A download that stalls mid-write for longer than `stability_ms` can be treated as complete and copied while still truncated. Increasing `stability_ms` reduces this risk but does not eliminate it entirely.
+3. Detection is poll-based (the directory is scanned about once a second), not event-driven. This is required because inotify delivers no events for files on Windows drives (`/mnt/c`, DrvFs/9p), which are exactly the folders this tool watches. The practical effect is up to roughly a second of latency between a file appearing and being copied.

@@ -3,7 +3,23 @@ Description=Clipboard photo loader — watch a directory and copy new images to 
 After=graphical-session.target
 
 [Service]
+# Assumes a pipx install (binary at ~/.local/bin/cb-photo-loader). If you
+# installed into a virtualenv instead, change this to the absolute path of
+# that venv's binary, e.g. /opt/src/cb-photo-loader/.venv/bin/cb-photo-loader
 ExecStart=%h/.local/bin/cb-photo-loader
+
+# --- WSL environment ---------------------------------------------------------
+# A systemd --user service inherits a minimal environment that breaks both
+# backends under WSL unless these are set:
+#   * PATH must include the Windows dirs so powershell.exe resolves (it drives
+#     the Windows clipboard AND the toast notifications).
+#   * WAYLAND_DISPLAY / DISPLAY are needed for the Linux/WSLg clipboard.
+# WSL_INTEROP is deliberately NOT set here: it is session-scoped and goes
+# stale on a WSL restart, so the app re-resolves a live one at runtime.
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0:/mnt/c/WINDOWS/System32
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=DISPLAY=:0
+
 Restart=on-failure
 RestartSec=2
 
