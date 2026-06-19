@@ -53,10 +53,16 @@ def test_linux_backend_falls_back_to_xclip(monkeypatch, tmp_path):
     img.write_bytes(b"JPG")
     monkeypatch.setattr(clip.shutil, "which", lambda t: "/usr/bin/xclip" if t == "xclip" else None)
     captured = {}
-    monkeypatch.setattr(clip.subprocess, "run", lambda cmd, **kw: captured.update(cmd=cmd))
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["input"] = kw.get("input")
+
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
     LinuxBackend().copy(img)
 
     assert captured["cmd"] == ["xclip", "-selection", "clipboard", "-t", "image/jpeg"]
+    assert captured["input"] == b"JPG"
 
 
 def test_linux_backend_raises_when_no_tool(monkeypatch, tmp_path):
