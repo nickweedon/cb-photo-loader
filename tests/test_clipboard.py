@@ -105,6 +105,26 @@ def test_dispatcher_isolates_failures_and_notifies(monkeypatch, tmp_path):
     assert notified == [img]
 
 
+def test_windows_backend_escapes_single_quotes(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+
+        class R:
+            stdout = "C:\\Users\\Nick\\Hannah's photo.png\n"
+
+        return R()
+
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
+    WindowsBackend().copy(Path("/mnt/c/Users/Nick/Hannah's photo.png"))
+
+    ps = calls[1][0]
+    joined = " ".join(ps)
+    assert "Hannah''s photo.png" in joined
+    assert "Hannah's photo.png" not in joined.replace("Hannah''s photo.png", "")
+
+
 def test_dispatcher_skips_notify_when_all_fail(tmp_path):
     img = tmp_path / "a.png"
     img.write_bytes(b"X")

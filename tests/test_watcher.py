@@ -27,6 +27,18 @@ def test_wait_for_stable_returns_false_when_deleted():
     assert wait_for_stable(Path("x"), 10, sleep=lambda s: None, get_size=boom) is False
 
 
+def test_wait_for_stable_returns_false_when_deleted_midloop():
+    calls = iter([100])
+
+    def get_size():
+        try:
+            return next(calls)
+        except StopIteration:
+            raise FileNotFoundError
+
+    assert wait_for_stable(Path("x"), 10, sleep=lambda s: None, get_size=get_size) is False
+
+
 def test_handler_calls_on_ready_for_matching_created(monkeypatch):
     ready = []
     handler = ImageHandler(_cfg(), ready.append)

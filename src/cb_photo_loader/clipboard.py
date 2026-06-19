@@ -33,6 +33,7 @@ class WindowsBackend:
             capture_output=True,
             text=True,
         ).stdout.strip()
+        win_path = win_path.replace("'", "''")
         script = (
             "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
             f"$img = [System.Drawing.Image]::FromFile('{win_path}'); "

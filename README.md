@@ -109,3 +109,8 @@ If systemd is not available (e.g. older WSL setups):
 ```bash
 nohup ~/.local/bin/cb-photo-loader &
 ```
+
+## Known limitations
+
+1. Rapid successive downloads are processed serially because the stability wait runs on the watcher's dispatch thread. Under a burst of incoming files the clipboard ends up holding whichever file finishes its stability check last, not strictly the newest one.
+2. A download that stalls mid-write for longer than `stability_ms` can be treated as complete and copied while still truncated. Increasing `stability_ms` reduces this risk but does not eliminate it entirely.

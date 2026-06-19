@@ -23,7 +23,12 @@ def main() -> None:
     clipboard = build_clipboard(config)
 
     if not config.watch_dir.is_dir():
-        log.warning("watch dir does not exist yet: %s", config.watch_dir)
+        log.info("creating watch dir: %s", config.watch_dir)
+        try:
+            config.watch_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            log.error("could not create watch dir %s: %s", config.watch_dir, exc)
+            return
 
     observer = run_observer(config, clipboard.copy_image)
 
