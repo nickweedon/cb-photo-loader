@@ -45,6 +45,8 @@ config.py (load_config)
 
 `load_config` reads `~/.config/cb-photo-loader/config.toml` (with built-in defaults as fallback) and applies the `CB_PHOTO_LOADER_WATCH_DIR` env override. The resulting `Config` dataclass is passed to `run_observer`, which sets up a `watchdog` filesystem observer. For each relevant file event, `ImageHandler` calls `Clipboard.copy_image`.
 
+**`run_observer` deliberately uses watchdog's `PollingObserver`, not the default inotify observer.** inotify does not deliver events for files on Windows drives (`/mnt/c`, DrvFs/9p) — and a Windows download folder is exactly what this tool watches — so an inotify observer silently sees nothing. `PollingObserver` stat-scans the directory (1s interval) and works on those mounts.
+
 ### Per-backend failure isolation
 
 `Clipboard.copy_image` iterates over all backends (Windows, Linux) and catches exceptions from each individually. A failure in one backend (e.g. `powershell.exe` unavailable) is logged as a warning and does not prevent the other backend from running. The notifier is also wrapped in its own try/except. This means the service degrades gracefully in non-WSL or headless environments.

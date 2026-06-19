@@ -1,8 +1,10 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+from watchdog.observers.polling import PollingObserver
+
 from cb_photo_loader.config import Config
-from cb_photo_loader.watcher import ImageHandler, wait_for_stable
+from cb_photo_loader.watcher import ImageHandler, run_observer, wait_for_stable
 
 
 def _cfg():
@@ -12,6 +14,24 @@ def _cfg():
         stability_ms=10,
         notifications=False,
     )
+
+
+def test_run_observer_uses_polling_observer(tmp_path):
+    # inotify does not fire on /mnt/c (DrvFs/9p) Windows mounts, which is the
+    # whole point of this tool — so run_observer must use a PollingObserver.
+    cfg = Config(
+        watch_dir=tmp_path,
+        extensions=frozenset({"png"}),
+        stability_ms=10,
+        notifications=False,
+    )
+    observer = run_observer(cfg, lambda p: None)
+    try:
+        assert isinstance(observer, PollingObserver)
+        assert observer.is_alive()
+    finally:
+        observer.stop()
+        observer.join()
 
 
 def test_wait_for_stable_settles():

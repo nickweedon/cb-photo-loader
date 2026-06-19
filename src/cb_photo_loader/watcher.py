@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 log = logging.getLogger(__name__)
 
@@ -63,8 +63,11 @@ class ImageHandler(FileSystemEventHandler):
             self._handle(event.dest_path)
 
 
-def run_observer(config, on_ready: Callable[[Path], None]) -> Observer:
-    observer = Observer()
+def run_observer(config, on_ready: Callable[[Path], None]) -> PollingObserver:
+    # A PollingObserver (stat-based scanning) is required, not the default
+    # inotify observer: inotify does not deliver events for files on Windows
+    # drives (/mnt/c, DrvFs/9p), which is exactly where this tool watches.
+    observer = PollingObserver(timeout=1.0)
     observer.schedule(ImageHandler(config, on_ready), str(config.watch_dir), recursive=False)
     observer.start()
     log.info("watching %s", config.watch_dir)
