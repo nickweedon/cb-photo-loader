@@ -1,6 +1,6 @@
 # cb-photo-loader
 
-A background service that watches a directory for newly downloaded images and automatically copies the latest one to both the Windows clipboard and the Linux/WSLg clipboard, then fires a desktop notification.
+A background service that watches a directory for newly downloaded images and automatically copies the latest one to both the Windows clipboard and the Linux/WSLg clipboard, then fires a native Windows toast notification.
 
 It is designed for WSL2 workflows where you download photos on a phone or browser and want them immediately available for pasting in Windows applications.
 
@@ -9,7 +9,7 @@ It is designed for WSL2 workflows where you download photos on a phone or browse
 1. Watches a configured directory for new image files (created or moved in).
 2. Waits for each file to finish writing (size-stability gate) before acting.
 3. Copies the image to the **Windows clipboard** via PowerShell and to the **Linux/WSLg clipboard** via `wl-copy` or `xclip`.
-4. Sends a desktop notification via `notify-send`.
+4. Shows a native Windows toast notification (with a thumbnail of the image) via PowerShell's WinRT notification API.
 
 ## Prerequisites
 
@@ -19,19 +19,18 @@ The following system tools must be installed and on `$PATH`:
 |---|---|---|
 | `wl-copy` | `wl-clipboard` | Linux/WSLg clipboard (preferred) |
 | `xclip` | `xclip` | Linux clipboard fallback if `wl-copy` is absent |
-| `notify-send` | `libnotify-bin` | Desktop notifications |
-| `powershell.exe` | WSL interop | Windows clipboard |
-| `wslpath` | WSL interop | Path translation for Windows clipboard |
+| `powershell.exe` | WSL interop | Windows clipboard **and** toast notifications |
+| `wslpath` | WSL interop | Path translation for the Windows clipboard and toast |
 
-Install the Linux tools on Ubuntu/Debian:
+Install the Linux clipboard tools on Ubuntu/Debian:
 
 ```bash
-sudo apt install wl-clipboard libnotify-bin
+sudo apt install wl-clipboard
 ```
 
-`powershell.exe` and `wslpath` are provided by WSL interop and are available automatically in a standard WSL2 installation.
+`powershell.exe` and `wslpath` are provided by WSL interop and are available automatically in a standard WSL2 installation. Notifications use the native Windows toast system through PowerShell, so no Linux notification daemon (e.g. `libnotify-bin`/`notify-send`) is required — WSLg does not run one anyway.
 
-**Note:** `wl-clipboard` and `libnotify-bin` are NOT always installed by default. The service will log warnings and skip the corresponding step if a tool is missing, but you must have at least one clipboard tool present for clipboard copying to work.
+**Note:** `wl-clipboard` is NOT always installed by default. The service logs a warning and skips any backend whose tool is missing (failures are isolated), but you need at least one Linux clipboard tool present for the Linux clipboard copy to work.
 
 ## Installation
 
@@ -68,7 +67,7 @@ cp config.example.toml ~/.config/cb-photo-loader/config.toml
 | `watch_dir` | `/mnt/temp/phone-downloads` | Directory to watch for new images |
 | `extensions` | `["png","jpg","jpeg","gif","bmp","webp"]` | File extensions to act on (case-insensitive) |
 | `stability_ms` | `750` | Milliseconds to wait for file size to stabilise before copying |
-| `notifications` | `true` | Whether to send desktop notifications via `notify-send` |
+| `notifications` | `true` | Whether to show a Windows toast notification per copy |
 
 Example `~/.config/cb-photo-loader/config.toml`:
 

@@ -3,11 +3,36 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
+
+# PowerShell that raises a Windows toast via the WinRT notification API. The
+# image path, title, and body are passed in through environment variables
+# (never interpolated into the script text) and XML-escaped inside PowerShell,
+# so filenames containing ', &, <, >, or $ cannot break or inject into it.
+_TOAST_SCRIPT = (
+    "$null = [Windows.UI.Notifications.ToastNotificationManager,"
+    "Windows.UI.Notifications,ContentType=WindowsRuntime];"
+    "$null = [Windows.Data.Xml.Dom.XmlDocument,"
+    "Windows.Data.Xml.Dom.XmlDocument,ContentType=WindowsRuntime];"
+    "$img = [System.Security.SecurityElement]::Escape($env:CBPL_IMG);"
+    "$title = [System.Security.SecurityElement]::Escape($env:CBPL_TITLE);"
+    "$body = [System.Security.SecurityElement]::Escape($env:CBPL_BODY);"
+    "$xml = \"<toast><visual><binding template='ToastImageAndText02'>"
+    "<image id='1' src='$img'/><text id='1'>$title</text>"
+    "<text id='2'>$body</text></binding></visual></toast>\";"
+    "$doc = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+    "$doc.LoadXml($xml);"
+    "$toast = [Windows.UI.Notifications.ToastNotification]::new($doc);"
+    "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
+    "\\WindowsPowerShell\\v1.0\\powershell.exe';"
+    "[Windows.UI.Notifications.ToastNotificationManager]"
+    "::CreateToastNotifier($appId).Show($toast)"
+)
 
 _MIME = {
     "png": "image/png",
@@ -62,13 +87,33 @@ class LinuxBackend:
 
 
 class Notifier:
+    """Raises a Windows toast (with a thumbnail) via PowerShell/WinRT.
+
+    WSLg provides no notification daemon, so notifications go to the native
+    Windows notification centre instead of a Linux ``notify-send`` server.
+    """
+
     def notify(self, image_path: Path) -> None:
-        if not shutil.which("notify-send"):
-            log.warning("notify-send not found; skipping notification")
+        if not shutil.which("powershell.exe"):
+            log.warning("powershell.exe not found; skipping notification")
             return
-        subprocess.run(
-            ["notify-send", "-i", str(image_path), "Image copied", image_path.name],
+        win_path = subprocess.run(
+            ["wslpath", "-w", str(image_path)],
             check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        env = {
+            **os.environ,
+            "CBPL_IMG": win_path,
+            "CBPL_TITLE": "Image copied",
+            "CBPL_BODY": image_path.name,
+        }
+        subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", _TOAST_SCRIPT],
+            check=True,
+            capture_output=True,
+            env=env,
         )
 
 

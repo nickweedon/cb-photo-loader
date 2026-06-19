@@ -76,6 +76,41 @@ def test_linux_backend_raises_when_no_tool(monkeypatch, tmp_path):
         pass
 
 
+def test_notifier_fires_windows_toast(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+
+        class R:
+            stdout = "C:\\imgs\\photo.png\n"
+
+        return R()
+
+    monkeypatch.setattr(clip.shutil, "which", lambda t: "/c/powershell.exe" if t == "powershell.exe" else None)
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
+    Notifier().notify(Path("/mnt/c/imgs/photo.png"))
+
+    # First call translates the path; second fires the toast.
+    assert calls[0][0] == ["wslpath", "-w", "/mnt/c/imgs/photo.png"]
+    toast_cmd, toast_kw = calls[1]
+    assert toast_cmd[0] == "powershell.exe"
+    assert "ToastNotification" in " ".join(toast_cmd)
+    # Dynamic values are handed off via env, never interpolated into the script.
+    env = toast_kw["env"]
+    assert env["CBPL_IMG"] == "C:\\imgs\\photo.png"
+    assert env["CBPL_BODY"] == "photo.png"
+    assert env["CBPL_TITLE"] == "Image copied"
+
+
+def test_notifier_skips_when_powershell_absent(monkeypatch):
+    monkeypatch.setattr(clip.shutil, "which", lambda t: None)
+    ran = []
+    monkeypatch.setattr(clip.subprocess, "run", lambda *a, **k: ran.append(a))
+    Notifier().notify(Path("/mnt/c/imgs/photo.png"))
+    assert ran == []  # no subprocess invoked when powershell.exe is unavailable
+
+
 def test_dispatcher_isolates_failures_and_notifies(monkeypatch, tmp_path):
     img = tmp_path / "a.png"
     img.write_bytes(b"X")

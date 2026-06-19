@@ -69,6 +69,10 @@ The second argument (`$true`) is the `copy` flag that tells Windows to keep the 
 
 `LinuxBackend.copy` prefers `wl-copy` (Wayland, used by WSLg) and falls back to `xclip` (X11). It passes the image bytes via stdin with the correct MIME type. If neither tool is found, a `RuntimeError` is raised (caught by the per-backend isolation above).
 
+### Notifications (Windows toast)
+
+`Notifier.notify` shows a **native Windows toast** (with a thumbnail) through PowerShell's WinRT API (`Windows.UI.Notifications`). WSLg runs no Linux notification daemon, so `notify-send` is deliberately not used. The dynamic values — image path, title, filename — are handed to PowerShell via environment variables (`CBPL_IMG` / `CBPL_TITLE` / `CBPL_BODY`) and XML-escaped inside the script (`SecurityElement::Escape`), never interpolated into the script text. This means filenames containing `'`, `&`, `<`, `>`, or `$` cannot break or inject into the toast. The toast XML lives in the `_TOAST_SCRIPT` constant in `clipboard.py`.
+
 ## Test strategy
 
-All clipboard and notifier backends shell out to system tools (`powershell.exe`, `wl-copy`, `xclip`, `notify-send`, `wslpath`). Tests mock these at the `subprocess.run` and `shutil.which` boundaries so the suite runs without any of those tools being installed. The `watchdog` observer is also replaced with stubs in watcher tests.
+All clipboard and notifier backends shell out to system tools (`powershell.exe`, `wl-copy`, `xclip`, `wslpath`). Tests mock these at the `subprocess.run` and `shutil.which` boundaries so the suite runs without any of those tools being installed. The `watchdog` observer is also replaced with stubs in watcher tests.
