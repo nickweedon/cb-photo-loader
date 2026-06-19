@@ -101,6 +101,10 @@ def test_notifier_fires_windows_toast(monkeypatch):
     assert env["CBPL_IMG"] == "C:\\imgs\\photo.png"
     assert env["CBPL_BODY"] == "photo.png"
     assert env["CBPL_TITLE"] == "Image copied"
+    # WSLENV must name the vars or WSL won't forward them to the Windows
+    # process, and the toast shows a generic "New Notification".
+    forwarded = env["WSLENV"].split(":")
+    assert {"CBPL_IMG", "CBPL_TITLE", "CBPL_BODY"} <= set(forwarded)
 
 
 def test_notifier_skips_when_powershell_absent(monkeypatch):

@@ -147,11 +147,18 @@ class Notifier:
             capture_output=True,
             text=True,
         ).stdout.strip()
+        # WSL only forwards Linux env vars to a Windows process if they are
+        # named in WSLENV; without this the toast text/image are empty and
+        # Windows shows a generic "New Notification". Append our vars to any
+        # existing WSLENV so we don't clobber the user's forwarding.
+        forwarded = ("CBPL_IMG", "CBPL_TITLE", "CBPL_BODY")
+        wslenv = ":".join(filter(None, (os.environ.get("WSLENV", ""), *forwarded)))
         env = _powershell_env(
             {
                 "CBPL_IMG": win_path,
                 "CBPL_TITLE": "Image copied",
                 "CBPL_BODY": image_path.name,
+                "WSLENV": wslenv,
             }
         )
         subprocess.run(
