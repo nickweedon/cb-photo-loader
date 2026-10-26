@@ -75,6 +75,8 @@ The second `SetDataObject` argument (`$true`) is the `copy` flag that tells Wind
 
 Both PowerShell call sites (clipboard and toast) run with the environment from `_powershell_env()`. WSL interop sockets (`/run/WSL/<pid>_interop`) are session-scoped, so the value a long-lived systemd `--user` service inherits goes stale after a WSL restart and `powershell.exe` then refuses to launch. When the inherited `WSL_INTEROP` is missing or its socket no longer exists, `_scan_proc_for_interop()` walks `/proc/<pid>/environ` for a live process's still-valid socket and uses that — so Windows-side calls survive reboots and session churn with no manual re-arming.
 
+**A live socket is not enough: it must reach the desktop.** WSL is started at boot by an S4U scheduled task, before anyone signs in, so the oldest interop sockets launch Windows processes in **session 0**, which has no desktop. A clipboard write there succeeds but is invisible, and toasts never show. `_interop_session()` probes each socket once (`(Get-Process -Id $PID).SessionId`, cached by socket path + inode) and `_scan_proc_for_interop()` returns only a socket in a non-zero session. When none exists (nobody signed in, or no WSL process was started from the desktop), `_powershell_env()` raises rather than let `powershell.exe` fall back to WSL's default session-0 socket, so the failure shows in the log instead of a false "copied".
+
 ### Linux/WSLg clipboard
 
 `LinuxBackend.copy` prefers `wl-copy` (Wayland, used by WSLg) and falls back to `xclip` (X11). It passes the image bytes via stdin with the correct MIME type. If neither tool is found, a `RuntimeError` is raised (caught by the per-backend isolation above).

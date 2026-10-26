@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import cb_photo_loader.clipboard as clip
 from cb_photo_loader.clipboard import (
     Clipboard,
@@ -7,6 +9,15 @@ from cb_photo_loader.clipboard import (
     Notifier,
     WindowsBackend,
 )
+
+_real_interop_session = clip._interop_session
+
+
+@pytest.fixture(autouse=True)
+def _desktop_session(monkeypatch):
+    # Never launch a real session probe: treat every interop socket as being on
+    # the desktop unless a test says otherwise.
+    monkeypatch.setattr(clip, "_interop_session", lambda sock: 1)
 
 
 def test_windows_backend_runs_powershell(monkeypatch):
@@ -199,7 +210,8 @@ def test_windows_backend_escapes_single_quotes(monkeypatch):
 def test_powershell_env_keeps_valid_current_interop(monkeypatch):
     monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/123_interop"})
     monkeypatch.setattr(clip.os.path, "exists", lambda p: True)
-    # _scan must not be consulted when the inherited socket still exists.
+    monkeypatch.setattr(clip, "_interop_session", lambda sock: 1)
+    # _scan must not be consulted when the inherited socket is live and interactive.
     monkeypatch.setattr(clip, "_scan_proc_for_interop", lambda: "/run/WSL/should_not_use")
     env = clip._powershell_env()
     assert env["WSL_INTEROP"] == "/run/WSL/123_interop"
@@ -216,6 +228,7 @@ def test_powershell_env_resolves_live_interop_when_stale(monkeypatch):
 def test_powershell_env_merges_extra(monkeypatch):
     monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/123_interop"})
     monkeypatch.setattr(clip.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(clip, "_interop_session", lambda sock: 1)
     env = clip._powershell_env({"CBPL_BODY": "x.png"})
     assert env["CBPL_BODY"] == "x.png"
     assert env["WSL_INTEROP"] == "/run/WSL/123_interop"
@@ -240,3 +253,79 @@ def test_dispatcher_skips_notify_when_all_fail(tmp_path):
     cb = Clipboard([Bad()], notifier=FakeNotifier())
     assert cb.copy_image(img) == []
     assert notified == []
+
+
+def test_powershell_env_replaces_session0_interop(monkeypatch):
+    # WSL started by the boot-time S4U task: its interop socket launches
+    # Windows processes in session 0, which has no desktop, so a clipboard
+    # write there is invisible. An inherited session-0 socket must be replaced.
+    monkeypatch.setattr(clip.os, "environ", {"WSL_INTEROP": "/run/WSL/boot_interop"})
+    monkeypatch.setattr(clip.os.path, "exists", lambda p: True)
+    monkeypatch.setattr(clip, "_interop_session", lambda sock: 0)
+    monkeypatch.setattr(clip, "_scan_proc_for_interop", lambda: "/run/WSL/desktop_interop")
+    env = clip._powershell_env()
+    assert env["WSL_INTEROP"] == "/run/WSL/desktop_interop"
+
+
+def test_scan_proc_skips_session0_sockets(monkeypatch):
+    monkeypatch.setattr(
+        clip, "_live_interop_sockets", lambda: ["/run/WSL/1682_interop", "/run/WSL/1754_interop"]
+    )
+    sessions = {"/run/WSL/1682_interop": 0, "/run/WSL/1754_interop": 1}
+    monkeypatch.setattr(clip, "_interop_session", sessions.get)
+    assert clip._scan_proc_for_interop() == "/run/WSL/1754_interop"
+
+
+def test_scan_proc_returns_none_when_only_session0(monkeypatch):
+    # Nobody signed in yet: better to fail loudly than to "copy" into session 0.
+    monkeypatch.setattr(clip, "_live_interop_sockets", lambda: ["/run/WSL/1682_interop"])
+    monkeypatch.setattr(clip, "_interop_session", lambda sock: 0)
+    assert clip._scan_proc_for_interop() is None
+
+
+def test_interop_session_probes_once_per_socket(monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(kw["env"]["WSL_INTEROP"])
+
+        class R:
+            returncode = 0
+            stdout = "1\r\n"
+
+        return R()
+
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
+    monkeypatch.setattr(clip, "_socket_key", lambda sock: (sock, 7))
+    clip._SESSION_CACHE.clear()
+    assert _real_interop_session("/run/WSL/9_interop") == 1
+    assert _real_interop_session("/run/WSL/9_interop") == 1
+    assert calls == ["/run/WSL/9_interop"]
+
+
+def test_powershell_env_raises_when_no_desktop_session(monkeypatch):
+    monkeypatch.setattr(clip.os, "environ", {})
+    monkeypatch.setattr(clip, "_scan_proc_for_interop", lambda: None)
+    with pytest.raises(RuntimeError, match="desktop session"):
+        clip._powershell_env()
+
+
+def test_interop_session_probe_asks_for_own_session_id(monkeypatch):
+    # Regression: the probe once shipped as "(Get-Process -Id ).SessionId"
+    # after $PID was shell-expanded away, so every probe failed.
+    cmds = []
+
+    def fake_run(cmd, **kw):
+        cmds.append(cmd)
+
+        class R:
+            returncode = 0
+            stdout = "1\r\n"
+
+        return R()
+
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
+    monkeypatch.setattr(clip, "_socket_key", lambda sock: (sock, 8))
+    clip._SESSION_CACHE.clear()
+    _real_interop_session("/run/WSL/10_interop")
+    assert "(Get-Process -Id $PID).SessionId" in cmds[0]
