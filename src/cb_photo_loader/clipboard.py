@@ -102,10 +102,29 @@ class WindowsBackend:
             text=True,
         ).stdout.strip()
         win_path = win_path.replace("'", "''")
+        # Place THREE formats on the clipboard in one DataObject:
+        #   * Bitmap (CF_DIB/CF_BITMAP) — what other Windows apps paste, and the
+        #     format the WSLg bridge mirrors to the Linux clipboard for WSL apps.
+        #   * Text (CF_UNICODETEXT) = the file path — native-Windows terminals
+        #     (VS Code, mintty, conhost) consume Ctrl+V as a bracketed *text*
+        #     paste and never deliver the keystroke to Claude Code's image
+        #     handler, so a bitmap-only clipboard pastes as nothing. The path
+        #     text rides through that text-paste and Claude loads it as an image.
+        #   * File-drop list (CF_HDROP) — a File-Explorer-style file reference,
+        #     for apps (and Claude paths) that prefer a dropped file.
+        # All three go through a single DataObject because each Clipboard.Set*
+        # call would otherwise replace the previous one. $true persists the data
+        # past the powershell exit (see SetDataObject note in CLAUDE.md).
         script = (
             "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; "
             f"$img = [System.Drawing.Image]::FromFile('{win_path}'); "
-            "[System.Windows.Forms.Clipboard]::SetDataObject($img, $true)"
+            "$do = New-Object System.Windows.Forms.DataObject; "
+            "$do.SetImage($img); "
+            f"$do.SetText('{win_path}'); "
+            "$fd = New-Object System.Collections.Specialized.StringCollection; "
+            f"$null = $fd.Add('{win_path}'); "
+            "$do.SetFileDropList($fd); "
+            "[System.Windows.Forms.Clipboard]::SetDataObject($do, $true)"
         )
         subprocess.run(
             ["powershell.exe", "-NoProfile", "-Command", script],

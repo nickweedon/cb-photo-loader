@@ -57,15 +57,21 @@ Before dispatching a new image to the clipboard, `ImageHandler` calls `wait_for_
 
 **Why this exists:** Phone and browser downloads write files incrementally. If the clipboard copy were triggered on the initial `created` event, it would read a partially written file, producing a corrupt image. The stability gate ensures the download is complete before copying.
 
-### Windows clipboard: `SetDataObject($img, $true)`
+### Windows clipboard: three formats via one `DataObject`, `SetDataObject($do, $true)`
 
-`WindowsBackend.copy` calls PowerShell with:
+`WindowsBackend.copy` builds a single `System.Windows.Forms.DataObject` carrying **three** clipboard formats and persists it:
 
 ```powershell
-[System.Windows.Forms.Clipboard]::SetDataObject($img, $true)
+$do = New-Object System.Windows.Forms.DataObject
+$do.SetImage($img)            # CF_DIB/CF_BITMAP
+$do.SetText($win_path)        # CF_UNICODETEXT (the file path)
+$do.SetFileDropList($fd)      # CF_HDROP
+[System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
 ```
 
-The second argument (`$true`) is the `copy` flag that tells Windows to keep the clipboard data alive after the PowerShell process exits. Without it (`$false` or omitted), the image is placed on the clipboard but vanishes as soon as the PowerShell process terminates — leaving the clipboard empty by the time you try to paste.
+**Why three formats, not just the bitmap.** Claude Code running *natively on Windows* (VS Code integrated terminal, mintty/git-bash, conhost/cmd) cannot paste a raw bitmap. Its image-paste handler (`chat:imagePaste`) does read `[Clipboard]::GetImage()` correctly — but the native-Windows terminal **consumes Ctrl+V itself and re-emits it as a bracketed *text* paste**, so the bare keystroke never reaches Claude's image handler. With only a bitmap on the clipboard (no text), that text-paste carries nothing and the paste silently inserts nothing (you briefly see "Pasting"). Putting the **file path as text** makes the text-paste deliver the path, which Claude then loads as an image (its `wIi()` absolute-path loader). `CF_HDROP` covers File-Explorer-style file-reference consumers. The bitmap stays for ordinary Windows apps and for WSL Claude (which reads the WSLg-mirrored Linux clipboard). All three must share one `DataObject` because each separate `Clipboard.Set*` call replaces the previous clipboard contents.
+
+The second `SetDataObject` argument (`$true`) is the `copy` flag that tells Windows to keep the clipboard data alive after the PowerShell process exits. Without it (`$false` or omitted), the data is placed on the clipboard but vanishes as soon as the PowerShell process terminates — leaving the clipboard empty by the time you try to paste.
 
 Both PowerShell call sites (clipboard and toast) run with the environment from `_powershell_env()`. WSL interop sockets (`/run/WSL/<pid>_interop`) are session-scoped, so the value a long-lived systemd `--user` service inherits goes stale after a WSL restart and `powershell.exe` then refuses to launch. When the inherited `WSL_INTEROP` is missing or its socket no longer exists, `_scan_proc_for_interop()` walks `/proc/<pid>/environ` for a live process's still-valid socket and uses that — so Windows-side calls survive reboots and session churn with no manual re-arming.
 

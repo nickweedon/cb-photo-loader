@@ -31,6 +31,38 @@ def test_windows_backend_runs_powershell(monkeypatch):
     assert "C:\\imgs\\a.png" in joined
 
 
+def test_windows_backend_also_places_text_path_and_file_drop(monkeypatch):
+    # Native-Windows terminals (VS Code, mintty, conhost) consume Ctrl+V as a
+    # bracketed *text* paste and never deliver the keystroke to Claude Code's
+    # image handler. A bitmap-only clipboard therefore pastes as nothing. We
+    # additionally place the file path as text (CF_UNICODETEXT) and a file-drop
+    # list (CF_HDROP) so the text-paste carries the path and Claude loads it.
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+
+        class R:
+            stdout = "C:\\imgs\\a.png\n"
+
+        return R()
+
+    monkeypatch.setattr(clip.subprocess, "run", fake_run)
+    WindowsBackend().copy(Path("/mnt/c/imgs/a.png"))
+
+    ps = calls[1][0]
+    joined = " ".join(ps)
+    # All three formats must be written through a single DataObject so they
+    # coexist (separate Set* calls would replace one another).
+    assert "DataObject" in joined
+    assert "SetImage" in joined
+    assert "SetText" in joined
+    assert "SetFileDropList" in joined
+    # Still a persisted clipboard write so it survives the powershell exit.
+    assert "SetDataObject" in joined and "$true" in joined
+    assert "C:\\imgs\\a.png" in joined
+
+
 def test_linux_backend_streams_bytes_to_wl_copy(monkeypatch, tmp_path):
     img = tmp_path / "a.png"
     img.write_bytes(b"PNGDATA")
