@@ -41,51 +41,85 @@ def wait_for_stable(path: Path, stability_ms: int, *, sleep=time.sleep, get_size
         prev = cur
 
 
-def list_existing(watch_dir: Path, *, listdir=os.listdir, sleep=time.sleep, retry_s: float = 2.0) -> set[Path]:
-    """Return the files already in watch_dir, retrying until it can be listed.
+Signature = tuple[int, int]
 
-    At boot the /mnt/c DrvFs mount can briefly fail to list (EINVAL/ENOENT).
-    watchdog silently treats that as an empty directory, so its first snapshot
-    is empty and the next poll reports every pre-existing file as created. This
-    listing is what lets the handler ignore them, so it must not give up early.
+
+def signature(path: Path, *, stat=os.stat) -> Signature | None:
+    """(size, mtime_ns) identifies a file's content across polling glitches."""
+    try:
+        st = stat(path)
+    except OSError:
+        return None
+    return (st.st_size, st.st_mtime_ns)
+
+
+def list_existing(
+    watch_dir: Path, *, listdir=os.listdir, stat=os.stat, sleep=time.sleep, retry_s: float = 2.0
+) -> dict[Path, Signature]:
+    """Return the files already in watch_dir with their signatures.
+
+    Retries until the directory can be listed: at boot the /mnt/c DrvFs mount
+    can briefly fail to list (EINVAL/ENOENT), which watchdog silently treats as
+    an empty directory.
     """
     while True:
         try:
-            return {watch_dir / name for name in listdir(watch_dir)}
+            names = listdir(watch_dir)
         except OSError as exc:
             log.warning("cannot list %s yet (%s); retrying", watch_dir, exc)
             sleep(retry_s)
+            continue
+        found = {}
+        for name in names:
+            path = watch_dir / name
+            sig = signature(path, stat=stat)
+            if sig is not None:
+                found[path] = sig
+        return found
 
 
 class ImageHandler(FileSystemEventHandler):
-    def __init__(self, config, on_ready: Callable[[Path], None], existing: set[Path] | None = None):
+    """Dispatch each image once per distinct content.
+
+    watchdog's polling diff is not trustworthy on /mnt/c: around boot and
+    Windows sign-in the directory can briefly list as empty, or report changed
+    inodes, so every existing file is reported deleted and then created again.
+    Identity is therefore (path, size, mtime), not watchdog's events: a file
+    that reappears unchanged is ignored, and delete events forget nothing. A
+    genuinely new file reusing a name has a new mtime and is dispatched.
+    """
+
+    def __init__(
+        self,
+        config,
+        on_ready: Callable[[Path], None],
+        existing: dict[Path, Signature] | None = None,
+        *,
+        stat=os.stat,
+    ):
         self.config = config
         self.on_ready = on_ready
-        # Paths already present (seeded at startup) or already dispatched. A
-        # path is dispatched at most once until it is deleted or moved away.
-        self._seen: set[Path] = set(existing or ())
+        self._seen: dict[Path, Signature] = dict(existing or {})
+        self._stat = stat
         self._lock = threading.Lock()
 
     def _handle(self, raw_path: str) -> None:
         path = Path(raw_path)
         if not self.config.matches(path):
             return
-        with self._lock:
-            if path in self._seen:
-                log.debug("already seen, skipped: %s", path)
-                return
-            self._seen.add(path)
-        if wait_for_stable(path, self.config.stability_ms):
-            log.info("image ready: %s", path)
-            self.on_ready(path)
-        else:
+        if not wait_for_stable(path, self.config.stability_ms):
             log.debug("file not stable, skipped: %s", path)
-            with self._lock:
-                self._seen.discard(path)
-
-    def _forget(self, raw_path: str) -> None:
+            return
+        sig = signature(path, stat=self._stat)
+        if sig is None:
+            return
         with self._lock:
-            self._seen.discard(Path(raw_path))
+            if self._seen.get(path) == sig:
+                log.debug("unchanged, already seen: %s", path)
+                return
+            self._seen[path] = sig
+        log.info("image ready: %s", path)
+        self.on_ready(path)
 
     def on_created(self, event) -> None:
         if not event.is_directory:
@@ -93,12 +127,7 @@ class ImageHandler(FileSystemEventHandler):
 
     def on_moved(self, event) -> None:
         if not event.is_directory:
-            self._forget(event.src_path)
             self._handle(event.dest_path)
-
-    def on_deleted(self, event) -> None:
-        if not event.is_directory:
-            self._forget(event.src_path)
 
 
 def run_observer(config, on_ready: Callable[[Path], None], *, poll_interval: float = 1.0) -> PollingObserver:
